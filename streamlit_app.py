@@ -78,7 +78,7 @@ def fetch_payload(api_url: str):
     """Fetch payload from backend and cache it for 30 minutes.
     Caching prevents new network requests on widget interactions (e.g. selector changes).
     """
-    resp = requests.get(api_url, timeout=120)
+    resp = requests.get(api_url, timeout=1000)
     resp.raise_for_status()
     return resp.json()
 
@@ -175,20 +175,43 @@ backend_state_map = {s["state_name"]: s for s in (kpis.get("by_state") or [])}
 if selected_state != "All" and selected_state in backend_state_map:
     state_stats = backend_state_map[selected_state]
 else:
-    # compute simple aggregates from view_df
-    agg = {}
-    agg["approved_labour_budget"] = int(view_df["approved_labour_budget"].sum()) if not view_df.empty else 0
-    agg["total_expenditure"] = float(view_df["total_exp"].sum()) if not view_df.empty else 0
-    agg["avg_wage_rate"] = float(view_df["average_wage_rate_per_day_per_person"].mean()) if not view_df.empty else 0
-    agg["avg_days_of_employment_per_household"] = float(view_df["average_days_of_employment_per_household"].mean()) if not view_df.empty else 0
-    agg["total_households_worked"] = int(view_df["total_households_worked"].sum()) if not view_df.empty else 0
-    agg["percent_utilization"] = None
-    if agg["approved_labour_budget"]:
+    # If a specific district is selected, show the district's own values (no aggregation)
+    if not view_df.empty and selected_district != "All":
+        # prefer the most recent record for the district if multiple exist
         try:
-            agg["percent_utilization"] = float(agg["total_expenditure"]) / float(agg["approved_labour_budget"]) * 100
+            dr = view_df.sort_values("data_fetched_on", ascending=False).iloc[0]
         except Exception:
-            agg["percent_utilization"] = None
-    state_stats = agg
+            dr = view_df.iloc[0]
+        state_stats = {
+            "approved_labour_budget": int(dr.get("approved_labour_budget") or 0),
+            "total_expenditure": float(dr.get("total_exp") or 0),
+            "avg_wage_rate": float(dr.get("average_wage_rate_per_day_per_person") or 0),
+            "avg_days_of_employment_per_household": float(dr.get("average_days_of_employment_per_household") or 0),
+            "total_households_worked": int(dr.get("total_households_worked") or 0),
+            "percent_utilization": None,
+        }
+        try:
+            if state_stats["approved_labour_budget"]:
+                state_stats["percent_utilization"] = (
+                    float(state_stats["total_expenditure"]) / float(state_stats["approved_labour_budget"]) * 100
+                )
+        except Exception:
+            state_stats["percent_utilization"] = None
+    else:
+        # fallback: compute simple aggregates from view_df (for state-level view)
+        agg = {}
+        agg["approved_labour_budget"] = int(view_df["approved_labour_budget"].sum()) if not view_df.empty else 0
+        agg["total_expenditure"] = float(view_df["total_exp"].sum()) if not view_df.empty else 0
+        agg["avg_wage_rate"] = float(view_df["average_wage_rate_per_day_per_person"].mean()) if not view_df.empty else 0
+        agg["avg_days_of_employment_per_household"] = float(view_df["average_days_of_employment_per_household"].mean()) if not view_df.empty else 0
+        agg["total_households_worked"] = int(view_df["total_households_worked"].sum()) if not view_df.empty else 0
+        agg["percent_utilization"] = None
+        if agg["approved_labour_budget"]:
+            try:
+                agg["percent_utilization"] = float(agg["total_expenditure"]) / float(agg["approved_labour_budget"]) * 100
+            except Exception:
+                agg["percent_utilization"] = None
+        state_stats = agg
 
 col1.metric("Approved Labour Budget", format_num(state_stats.get("approved_labour_budget")))
 col2.metric("Total Expenditure", format_num(state_stats.get("total_expenditure")))
